@@ -1,0 +1,6 @@
+---
+- name: Destroy Docker Container
+  hosts: remote
+  tasks:
+    - name: Run destroy script
+      script: templates/destroy.sh

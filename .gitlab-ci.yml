@@ -1,0 +1,65 @@
+.ansible_script: &ansible_script
+  - echo "[remote]" > inventory.ini
+  - echo "$STAGING_HOST ansible_connection=ssh ansible_user=$STAGING_USERNAME ansible_ssh_pass=$STAGING_PASSWORD" >> inventory.ini
+  - apt-get update -y
+  - apt-get install -y ansible sshpass
+  - mkdir -p ~/.ssh
+  - touch ~/.ssh/known_hosts
+  - ssh-keyscan -H $STAGING_HOST >> ~/.ssh/known_hosts
+  - chmod 600 ~/.ssh/known_hosts
+
+.docker_common: &docker_common
+  image: docker
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+    DOCKER_TLS_CERTDIR: ""
+  services:
+    - docker:20.10.5-dind
+
+
+stages:
+  - test
+  - build
+  - deploy
+  - destroy
+test:
+  image: python:3.10
+  stage: test
+  script:
+    - apt-get update && apt-get install ffmpeg libsm6 libxext6  -y
+    - pip3 install --no-cache-dir -r requirements.txt
+    - PYTHONPATH=. python3 -m pytest tests/tests.py
+
+build:
+  stage: build
+  <<: *docker_common
+  allow_failure: false
+  when: manual
+  script:
+    - docker info
+    - apk add --update --no-cache curl py-pip gcc python3-dev musl-dev linux-headers
+    - python3 --version
+    - echo $CI_REGISTRY_PASSWORD | docker login -u $CI_REGISTRY_USER $CI_REGISTRY --password-stdin
+    - eval $(ssh-agent -s)
+    - chmod 400 "$ACCESS_TOKEN"
+    - ssh-add "$ACCESS_TOKEN"
+    - mkdir -p ~/.ssh
+    - chmod 700 ~/.ssh
+    - dvc get https://$CI_REGISTRY_USER:$CI_REGISTRY_PASSWORD@$MODEL_PROJECT models --rev project_2
+    - mv models ./
+    - docker build -t $CI_REGISTRY/cvr7/$CI_REGISTRY_USER/pr1_service/service2:latest .
+    - docker push $CI_REGISTRY/cvr7/$CI_REGISTRY_USER/pr1_service/service2:latest
+
+deploy:
+  stage: deploy
+  dependencies: [build]
+  script:
+    - *ansible_script
+    - ansible-playbook -i inventory.ini ci-scripts/deploy.yaml --extra-vars "USER=$CI_REGISTRY_USER PWD=$CI_REGISTRY_PASSWORD REGISTRY=$CI_REGISTRY"
+
+destroy:
+  stage: destroy
+  when: manual
+  script:
+    - *ansible_script
+    - ansible-playbook -i inventory.ini ci-scripts/destroy.yaml

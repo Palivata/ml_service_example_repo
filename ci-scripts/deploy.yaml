@@ -1,0 +1,5 @@
+- name: Deploy Docker Container
+  hosts: remote
+  tasks:
+    - name: Run deploy script
+      script: templates/deploy.sh "{{ PWD }}" "{{ USER }}" "{{ REGISTRY }}"
